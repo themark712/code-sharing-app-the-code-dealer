@@ -35,7 +35,7 @@ export const protect = asyncHandler(async (req, res, next) => {
 
 // admin middleware
 export const adminMiddleware = asyncHandler(async (req, res, next) => {
-  //console.log('adminMiddleware' + req.user);
+  console.log('adminMiddleware' + req.user);
 
   if (req.user && req.user.role === "admin") {
     // if user is admin, move to the next middleware/controller
