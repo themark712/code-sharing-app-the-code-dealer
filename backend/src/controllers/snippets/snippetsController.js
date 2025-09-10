@@ -59,16 +59,11 @@ export const getPublicSnippets = asyncHandler(async (req, res) => {
   }
 });
 
-export const getUserSnippet = asyncHandler(async (req, res) => {
+export const getPublicSnippet = asyncHandler(async (req, res) => {
   try {
-    const userId = req.user._id;
     const snippetId = req.params.id;
 
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized! Please log in." });
-    }
-
-    const snippet = await Snippet.findOne({ _id: snippetId, user: userId })
+    const snippet = await Snippet.findOne({ _id: snippetId, isPublic: true })
       .populate("tags", "name")
       .populate("user", "_id name photo");
 
@@ -79,11 +74,16 @@ export const getUserSnippet = asyncHandler(async (req, res) => {
   }
 });
 
-export const getPublicSnippet = asyncHandler(async (req, res) => {
+export const getUserSnippet = asyncHandler(async (req, res) => {
   try {
+    const userId = req.user._id;
     const snippetId = req.params.id;
 
-    const snippet = await Snippet.findOne({ _id: snippetId, isPublic: true })
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized! Please log in." });
+    }
+
+    const snippet = await Snippet.findOne({ _id: snippetId, user: userId })
       .populate("tags", "name")
       .populate("user", "_id name photo");
 
@@ -152,6 +152,59 @@ export const getUserSnippets = asyncHandler(async (req, res) => {
   }
 });
 
+export const createSnippet = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { title, description, code, language, tags, isPublic } = req.body;
+
+    // validate user
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized! Please log in." });
+    }
+
+    // validate title
+    if (!title || title.length < 3) {
+      return res.status(400).json({ message: "Title is required and should be at least 3 characters long." });
+    }
+
+    // validate description
+    if (!description || description.length < 5) {
+      return res.status(400).json({ message: "Description is required and should be at least 5 characters long." });
+    }
+
+    // validate code
+    if (!code || code.length < 10) {
+      return res.status(400).json({ message: "Code is required and should be at least 10 characters long." });
+    }
+
+    // check if the tags are valid
+    if (
+      !tags ||
+      tags.length === 0 ||
+      !tags.every((tag) => mongoose.Types.ObjectId.isValid(tag))
+    ) {
+      return res.status(400).json({ message: "Please provide valid tags" });
+    }
+
+    const snippet = new Snippet({
+      title,
+      description,
+      code,
+      language,
+      tags,
+      isPublic,
+      user: userId,
+    });
+
+    await snippet.save();
+
+    return res.status(201).json(snippet);
+  } catch (error) {
+    console.log("Error in snippetsController.js/createSnippet()", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
 export const updateSnippet = asyncHandler(async (req, res) => {
   try {
     const userId = req.user._id;
@@ -210,56 +263,95 @@ export const deleteSnippet = asyncHandler(async (req, res) => {
   }
 });
 
-export const createSnippet = asyncHandler(async (req, res) => {
+export const likeSnippet = asyncHandler(async (req, res) => {
+  try {
+    const snippetId = req.params.id;
+    const userId = req.user._id;
+
+    let snippet = await Snippet.findById(snippetId);
+
+    if (!snippet) {
+      return res.status(401).json({ message: "Snippet not found." });
+    }
+
+    // check if user has already liked
+    if (snippet.likedBy.includes(userId)) {
+      // unlike snippet if user has already liked it
+      snippet.likes -= 1;
+      snippet.likedBy = snippet.likedBy.filter((id) => {
+        return id.toString() !== userId.toString();
+      });
+      await snippet.save();
+      return res.status(200).json({
+        message: "Snippet unliked successfully",
+        likes: snippet.likes
+      });
+    } else {
+      // add like if user has not already liked
+      snippet.likes += 1;
+      snippet.likedBy.push(userId);
+      await snippet.save();
+      return res.status(200).json({
+        message: "Snippet liked successfully",
+        likes: snippet.likes
+      });
+    }
+  } catch (error) {
+    console.log("Error in snippetsController.js/likeSnippet()", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+export const getLikedSnippets = asyncHandler(async (req, res) => {
   try {
     const userId = req.user._id;
-    const { title, description, code, language, tags, isPublic } = req.body;
+    const tagId = req.query.tagId;
+    const search = req.query.search;
 
     // validate user
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized! Please log in." });
     }
 
-    // validate title
-    if (!title || title.length < 3) {
-      return res.status(400).json({ message: "Title is required and should be at least 3 characters long." });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // build the query object
+    const query = { likedBy: userId };    // check if the user has liked the snippet
+
+    // filter by tag id if provided - selects documents whose tag array contains at least one element
+    if (tagId) {
+      query.tags = { $in: [tagId] };
     }
 
-    // validate description
-    if (!description || description.length < 5) {
-      return res.status(400).json({ message: "Description is required and should be at least 5 characters long." });
+    // search by title or description
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } }
+      ];
     }
 
-    // validate code
-    if (!code || code.length < 10) {
-      return res.status(400).json({ message: "Code is required and should be at least 10 characters long." });
-    }
+    // fetch the paginated liked snippets
+    const snippets = await Snippet.find(query)
+      .populate("tags", "name")
+      .populate("user", "_id name photo")
+      .sort({createdAt: -1})
+      .skip(skip)
+      .limit(limit);
+    
+      // get total snippets
+      const totalSnippets = await Snippet.countDocuments(query);
 
-    // check if the tags are valid
-    if (
-      !tags ||
-      tags.length === 0 ||
-      !tags.every((tag) => mongoose.Types.ObjectId.isValid(tag))
-    ) {
-      return res.status(400).json({ message: "Please provide valid tags" });
-    }
-
-    const snippet = new Snippet({
-      title,
-      description,
-      code,
-      language,
-      tags,
-      isPublic,
-      user: userId,
-    });
-
-    await snippet.save();
-
-    return res.status(201).json(snippet);
+      return res.status(200).json({
+        totalSnippets,
+        totalPages: Math.ceil(totalSnippets/limit),
+        currentPage: page,
+        snippets
+      });
   } catch (error) {
-    console.log("Error in snippetsController.js/createSnippet()", error);
+    console.log("Error in snippetsController.js/getLikedSnippets()", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 });
-
