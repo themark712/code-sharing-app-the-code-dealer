@@ -9,7 +9,9 @@ import {
   getUserSnippets, 
   updateSnippet, 
   likeSnippet,
-  getLikedSnippets
+  getLikedSnippets,
+  getLeaderBoard,
+  getPopularSnippets
 } from '../controllers/snippets/snippetsController.js';
 
 const router = express.Router();
@@ -40,5 +42,11 @@ router.patch("/snippet/like/:id", protect, likeSnippet);
 
 // get liked snippets
 router.get("/snippets/liked", protect, getLikedSnippets);
+
+// get leaderboard
+router.get("/leaderboard", protect, getLeaderBoard)
+
+// get random most liked snippets
+router.get("/snippets/popular", getPopularSnippets);
 
 export default router;

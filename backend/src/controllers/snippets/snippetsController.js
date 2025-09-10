@@ -337,21 +337,128 @@ export const getLikedSnippets = asyncHandler(async (req, res) => {
     const snippets = await Snippet.find(query)
       .populate("tags", "name")
       .populate("user", "_id name photo")
-      .sort({createdAt: -1})
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
-    
-      // get total snippets
-      const totalSnippets = await Snippet.countDocuments(query);
 
-      return res.status(200).json({
-        totalSnippets,
-        totalPages: Math.ceil(totalSnippets/limit),
-        currentPage: page,
-        snippets
-      });
+    // get total snippets
+    const totalSnippets = await Snippet.countDocuments(query);
+
+    return res.status(200).json({
+      totalSnippets,
+      totalPages: Math.ceil(totalSnippets / limit),
+      currentPage: page,
+      snippets
+    });
   } catch (error) {
     console.log("Error in snippetsController.js/getLikedSnippets()", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+export const getLeaderBoard = asyncHandler(async (req, res) => {
+  try {
+    const leaderboard = await Snippet.aggregate([
+      {
+        $group: {
+          _id: "$user",   // group by user
+          totalLikes: { $sum: "$likes" },     // sum of likes
+          snippetCount: { $sum: 1 }      // count of snippets
+        }
+      },
+      {
+        $lookup: {
+          from: "users",    // join with users collection
+          localField: "_id",
+          foreignField: "_id",   // join on _id field
+          as: "userInfo"    // name of the array field that will hold user information
+        }
+      },
+      {
+        $unwind: "$userInfo",    // flattens the userInfo array
+      },
+      {
+        $project: {
+          _id: 0,
+          name: "$userInfo.name",
+          photo: "$userInfo.photo",
+          totalLikes: 1,
+          _id: "$userInfo._id",
+          snippetCount: 1,
+          score: {
+            $add: [
+              { $toInt: "$totalLikes" },
+              { $multiply: ["$snippetCount", 10] }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { totalLikes: -1 }    // sort by total likes
+      },
+      { $limit: 100 }   // get top 100 users
+    ]);
+
+    return res.status(200).json(leaderboard);
+  } catch (error) {
+    console.log("Error in snippetsController.js/getLeaderBoard()", error);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+export const getPopularSnippets = asyncHandler(async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const tagId = req.query.tagId;
+    const search = req.query.search;
+    const skip = (page - 1) * limit;
+
+    // build the query object
+    const query = { isPublic: true };
+
+    // filter by tagId if provided
+    if (tagId) {
+      query.tags = { $in: [tagId] };
+    }
+
+    // filter title and description by search term
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },   // "i" for case-insensitive
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // fetch popular snippets, displaying tag names rather than ids
+    const popularSnippets = await Snippet.find(query)
+      .populate("tags", "name")
+      .populate("user", "_id name  photo")
+      .sort({ likes: -1 })
+      .skip(skip)
+      .limit(limit * 10);  // get 10 * the limit to get a good sample
+
+    // shuffle the snippets
+    const shuffledSnippets = popularSnippets.sort(() => 0.5 - Math.random());
+
+    // get snippets for the current page
+    const snippets = shuffledSnippets.slice((page - 1) * limit, page * limit);
+
+    // get total snippets count
+    const totalSnippets = await Snippet.countDocuments(query);
+
+    // send a paginated response
+    return res.status(200).json({
+      totalSnippets,
+      totalPages: Math.ceil(totalSnippets / limit),
+      currentPage: page,
+      snippets
+    });
+
+
+
+  } catch (error) {
+    console.log("Error in snippetsController.js/getPopularSnippets()", error);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 });
